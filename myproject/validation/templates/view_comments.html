@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Comments</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+        }
+        .comment {
+            border: 1px solid #ddd;
+            padding: 10px;
+            margin-bottom: 10px;
+        }
+        .comment h3 {
+            margin: 0;
+            font-size: 1.2em;
+        }
+        .comment p {
+            margin: 5px 0;
+        }
+    </style>
+</head>
+<body>
+    <h1>Comments</h1>
+    {% if comments %}
+        <h1>number of comments : <b>{{number_comments}}</b> comments</h1>
+        {% for comment in comments %}
+            <div class="comment">
+                <p><strong>Text:</strong> {{ comment.texte }}</p>
+                <p><strong>Script:</strong> {{ comment.script}}</p>
+                <p><strong>filtred:</strong> {{ comment.filtred}}</p>
+            </div>
+        {% endfor %}
+    {% else %}
+        <p>No comments found.</p>
+    {% endif %}
+</body>
+</html>

@@ -1,0 +1,30 @@
+{% for evenement in evenements %}
+    <h2>{{ evenement.titre_event }}</h2>
+    <p>{{ evenement.annotation_event }}</p>
+    <ul>
+        {% for video in evenement.videos %}
+            <li>
+                <h3>{{ video.titre_video }}</h3>
+                <p>{{ video.description_video }}</p>
+                <p>{{ video.date_publication }}</p>
+                <a href="{{ video.lien_video }}">{{ video.lien_video }}</a>
+                <p>{{ video.annotation_video }}</p>
+                <p>{{ video.emotion }}</p>
+                <ul>
+                    {% for commentaire in video.commentaires %}
+                        <li>
+                            <p>{{ commentaire.texte }}</p>
+                            <p>{{ commentaire.date_publication }}</p>
+                            <p>{{ commentaire.auteur }}</p>
+                            <p>{{ commentaire.langue }}</p>
+                            <p>{{ commentaire.annotation_commentaire }}</p>
+                            <p>{{ commentaire.emotion }}</p>
+                        </li>
+                    {% endfor %}
+                </ul>
+                <a href="{% url 'validate_video' video.id_video %}">Validate</a>
+                <a href="{% url 'discard_video' video.id_video %}">Discard</a>
+            </li>
+        {% endfor %}
+    </ul>
+{% endfor %}

@@ -1,0 +1,1 @@
+web: gunicorn conflict_detection_app.wsgi

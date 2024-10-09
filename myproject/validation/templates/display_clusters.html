@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Clusters</title>
+</head>
+<body>
+    <h1>Liste des Clusters</h1>
+    
+    <table border="1">
+        <thead>
+            <tr>
+                <th>Soundex</th>
+                <th>Mots dans le Cluster</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for cluster in clusters %}
+            <tr>
+                <td>{{ cluster.soundex }}</td>
+                <td>
+                    <ul>
+                        {% for word, words_list in cluster.items %}
+                        {% if word != "_id" and word != "soundex" %}
+                        <li><strong>{{ word }}</strong>: {{ words_list|join:", " }}</li>
+                        {% endif %}
+                        {% endfor %}
+                    </ul>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+
+</body>
+</html>
