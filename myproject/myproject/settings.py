@@ -24,7 +24,7 @@ SECRET_KEY = 'django-insecure-5&^$i^u0&k5an42=(*#(i(0a*mop^1o^#p^+a=q&0d&@j(h9zw
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = ['*']
 
 
 # Application definition
@@ -98,6 +98,7 @@ WSGI_APPLICATION = 'myproject.wsgi.application'
 DATA_UPLOAD_MAX_MEMORY_SIZE = 10242880  # 5 MB (adjust the size as needed)
 
 CORS_ALLOWED_ORIGINS = [
+    "https://conflict-detection-frontend.vercel.app/",
     "http://localhost:8081",  # Add your frontend URL
     "http://192.168.1.23:8080",
     "http://localhost:8080"
@@ -109,6 +110,7 @@ CORS_ALLOWED_ORIGINS = [
 
 CORS_ALLOW_CREDENTIALS = True
 CSRF_TRUSTED_ORIGINS = [
+    "https://conflict-detection-frontend.vercel.app/",
     'http://localhost:8081',
     "http://192.168.1.23:8080/",
     "http://localhost:8080"
