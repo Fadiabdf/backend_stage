@@ -98,7 +98,7 @@ WSGI_APPLICATION = 'myproject.wsgi.application'
 DATA_UPLOAD_MAX_MEMORY_SIZE = 10242880  # 5 MB (adjust the size as needed)
 
 CORS_ALLOWED_ORIGINS = [
-    "https://conflict-detection-frontend.vercel.app/",
+    "https://conflict-detection-frontend.vercel.app",
     "http://localhost:8081",  # Add your frontend URL
     "http://192.168.1.23:8080",
     "http://localhost:8080"
@@ -110,7 +110,7 @@ CORS_ALLOWED_ORIGINS = [
 
 CORS_ALLOW_CREDENTIALS = True
 CSRF_TRUSTED_ORIGINS = [
-    "https://conflict-detection-frontend.vercel.app/",
+    "https://conflict-detection-frontend.vercel.app",
     'http://localhost:8081',
     "http://192.168.1.23:8080/",
     "http://localhost:8080"
