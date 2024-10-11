@@ -7,11 +7,11 @@ WORKDIR /myproject
 # Copy the entire project (including requirements.txt) into the container
 COPY . /myproject
 
-# Install the dependencies
-RUN pip install --no-cache-dir -r requirements.txt
-
 # Download spaCy model
 RUN python -m spacy download fr_core_news_sm
+
+# Install the dependencies
+RUN pip install --no-cache-dir -r /myproject/myproject/requirements.txt
 
 # Expose the port the app runs on
 EXPOSE 8080
