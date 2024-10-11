@@ -7,8 +7,8 @@ WORKDIR /myproject
 # Copy the current directory contents into the container
 COPY . /myproject
 
-# Ensure requirements.txt is copied to the correct place
-COPY requirements.txt /myproject/requirements.txt
+RUN ls -al /myproject
+RUN ls -al /myproject/myproject
 
 # Install the dependencies
 RUN pip install --no-cache-dir -r /myproject/requirements.txt
