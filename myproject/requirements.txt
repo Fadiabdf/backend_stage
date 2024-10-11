@@ -1,18 +1,26 @@
+cachetools==5.4.0
 Django==4.1.7
 djangorestframework==3.14.0
 django-cors-headers==3.14.0
+dnspython==2.6.1
 emoji==2.12.1
 en-core-web-sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.7.1/en_core_web_sm-3.7.1-py3-none-any.whl#sha256=86cc141f63942d4b2c5fcee06630fd6f904788d2f0ab005cce45aadb8fb73889
 fr-core-news-sm @ https://github.com/explosion/spacy-models/releases/download/fr_core_news_sm-3.7.0/fr_core_news_sm-3.7.0-py3-none-any.whl#sha256=37e9f1f6a278a5138fabdabcc92cc559da917f9b24c76f0adf6758720d7eab10
 fuzzywuzzy==0.18.0
+thinc==8.0.12
 google_api_python_client==2.140.0
 gunicorn==23.0.0
 jellyfish==1.1.0
+jupyter_client==8.6.0
+jupyter_core==5.7.1
+langcodes==3.3.0
 langdetect==1.0.9
+Levenshtein==0.25.1
+lxml==4.9.4
 mongoengine==0.28.2
 nltk==3.8.1
 num2words==0.5.13
-numpy==2.1.2
+numpy==1.21.0
 openpyxl==3.1.5
 pandas==2.2.3
 pymongo==3.12.0
@@ -21,6 +29,8 @@ Requests==2.32.3
 scikit_learn==1.5.2
 scipy==1.14.1
 spacy==3.7.6
+spacy-legacy==3.0.12
+spacy-loggers==1.0.5
 waitress==3.0.0
 youtube_dl==2021.12.17
 yt_dlp==2024.10.7
