@@ -17,8 +17,8 @@ from langdetect import detect
 from pymongo import MongoClient
 #_________________________________________________________________________
 # Load spaCy models for English and French
-nlp_en = spacy.load('en_core_web_lg')
-nlp_fr = spacy.load('fr_core_news_lg')
+nlp_en = spacy.load('en_core_web_sm')
+nlp_fr = spacy.load('fr_core_news_sm')
 #-----------------------------------------------------
 nltk.download('stopwords')
 #-----------------------------------------------------

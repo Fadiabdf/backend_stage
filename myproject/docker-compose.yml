@@ -1,0 +1,17 @@
+version: '3.8'
+
+services:
+  web:
+    build: .  # Build the Dockerfile in the current directory
+    command: gunicorn myproject.wsgi:application --bind 0.0.0.0:8080  # Use Gunicorn to run the Django app
+    volumes:
+      - .:/app  # Mount the current directory (app code) to /app in the container
+    ports:
+      - "8080:8080"  # Expose port 8080 of the container to the host
+    depends_on:
+      - db  # Ensure the MongoDB service starts before the web service
+
+  db:
+    image: mongo  # Use the official MongoDB image
+    ports:
+      - "27017:27017"  # Expose the default MongoDB port
