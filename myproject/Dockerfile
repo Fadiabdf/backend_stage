@@ -4,14 +4,14 @@ FROM python:3.11
 # Set the working directory in the container
 WORKDIR /myproject
 
-# Copy the current directory contents into the container
+# Copy the entire project (including requirements.txt) into the container
 COPY . /myproject
 
-
 # Install the dependencies
-RUN pip install --no-cache-dir -r requirements.txt
-RUN python -m spacy download fr_core_news_sm
+RUN pip install --no-cache-dir -r /myproject/requirements.txt
 
+# Download spaCy model
+RUN python -m spacy download fr_core_news_sm
 
 # Expose the port the app runs on
 EXPOSE 8080
@@ -19,5 +19,5 @@ EXPOSE 8080
 # Set environment variables
 ENV DJANGO_SETTINGS_MODULE=myproject.settings
 
-# Run the Django app using Gunicorn (you can use 'waitress' if you prefer)
-CMD ["gunicorn","--workers=2","--timeout=300","myproject.wsgi:application", "--bind", "0.0.0.0:8080"]
+# Run the Django app using Gunicorn
+CMD ["gunicorn", "--workers=2", "--timeout=300", "myproject.wsgi:application", "--bind", "0.0.0.0:8080"]
