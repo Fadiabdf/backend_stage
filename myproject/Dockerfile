@@ -4,11 +4,8 @@ FROM python:3.11
 # Set the working directory in the container
 WORKDIR /myproject
 
-# Copy the current directory contents into the container
+# Copy the entire project (including requirements.txt) into the container
 COPY . /myproject
-
-RUN ls -al /myproject
-RUN ls -al /myproject/myproject
 
 # Install the dependencies
 RUN pip install --no-cache-dir -r /myproject/requirements.txt
