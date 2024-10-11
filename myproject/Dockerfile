@@ -9,7 +9,7 @@ COPY . /myproject
 
 
 # Install the dependencies
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r /myproject/requirements.txt
 RUN python -m spacy download fr_core_news_sm
 
 
