@@ -1,7 +1,7 @@
 from django.urls import path
 from .views import  add_emotion_to_category, delete_comment, delete_video, get_videos_by_corpus, load_json, manage_categories, manage_corpus, manage_emotions, scrape_video, search_videos,  submit_validation, update_comment_descriptor,update_comments,get_comments, update_corpus
 # for cleaning ----------------------------------------------------------
-from .views import BaseCleaningText,DeepCleaningText,comment_before,comment_after,display_clusters
+from .views import BaseCleaningText,DeepCleaningText,display_clusters,comment_after,comment_before
 #------------------------------------------------------------------------
 from .views import get_etiquettes_view,etqchoisie_view, get_mots_view, motchoisie_view, download_excel
 from .views import process_combinations, get_liste_corpus_view, corpus_choisi, get_freq_script, script_choisi
@@ -22,6 +22,7 @@ urlpatterns = [
     path('scriptchoisi/', script_choisi, name='scriptchoisi'),
     #path('languages/', get_langues, name='languages'),
     path('download_excel/', download_excel, name='download_excel_file'),
+    
     path('submit_validation/', submit_validation, name='submit_validation'),   
     path('update_comments/',update_comments, name='update_comment'),
     path('get_comments/', get_comments, name='get_comments'),
@@ -43,7 +44,7 @@ urlpatterns = [
  
     path('comments/delete/', delete_comment, name='delete_comment'),  # Add this
     path('videos/delete/', delete_video, name='delete_video'),  # Add this
-        #----------------------------------------------------------------------------
+    #----------------------------------------------------------------------------
     path('base_clean_text/', BaseCleaningText.as_view(), name='base_clean_text'),
     path('deep_clean_text/', DeepCleaningText.as_view(), name='deep_clean_text'),
     path('before_comments/', comment_before, name='view_comment_before_preclean'),

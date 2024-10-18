@@ -31,10 +31,436 @@ from yt_dlp import YoutubeDL
 from openpyxl import Workbook
 from django.http import HttpResponse
 from io import BytesIO
+import concurrent.futures
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 client = MongoClient("mongodb+srv://maroua:maroua2003@cluster0.p6t0qwx.mongodb.net/")
 db = client["projet_1cs"]
 
+
+#----------------------------------------1ere statistique-------------------------------------------------
+#-----------------------------------------------Recuperer les descripteurs-------------------------
+def retrieve_descriptors(script_param,langues_param):
+    count_Comment = 0
+    corpus_id = get_corpus_id_by_title(CORPUS)
+    data = []
+    for video in video_collection.find({}, {"_id": 0, "videos.commentaires.descripteur": 1, "videos.commentaires.script": 1, "videos.commentaires.langue": 1, "videos.corpus":1}):
+        for video_item in video.get('videos', []):
+            if video_item.get('corpus')==corpus_id:
+                for commentaire in video_item.get('commentaires', []):
+                    if commentaire.get('script') == script_param:
+                        commentaire_langues = commentaire.get('langue', [])
+                        if set(commentaire_langues).issubset(set(langues_param)):
+                            count_Comment += 1
+                            descripteurs = commentaire.get('descripteur', [])
+                            data.append({'descripteur': descripteurs})
+    return pd.DataFrame(data)
+    
+#-------------------------------------Recuperer l'id d'une etiquette-------------------------------
+def get_etiquette_id(collection,name):
+    result = collection.find_one({"name": name.strip()}, {"_id": 1})
+    return str(result["_id"]) if result else None
+
+#--------------------------------------Fonction pour calculer mi et khi2 pour 2 descripteurs------------------
+def calculate_mi_khi2_desc(df, x_names, y_names):
+    etiquette_collection = db["etiquette"]
+    x_set = {get_etiquette_id(etiquette_collection,name) for name in x_names if get_etiquette_id(etiquette_collection,name)}
+    y_set = {get_etiquette_id(etiquette_collection,name) for name in y_names if get_etiquette_id(etiquette_collection,name)}
+
+    all_annotations = x_set.union(y_set)
+    for annotation in all_annotations:
+        df[f'annotation_{annotation}'] = df['descripteur'].apply(lambda x: int(annotation in x))
+
+    x_cols = [f'annotation_{x_id}' for x_id in x_set]
+    y_cols = [f'annotation_{y_id}' for y_id in y_set]
+
+    df['combined_x'] = df[x_cols].apply(lambda row: all(row), axis=1).astype(int)
+    df['combined_y'] = df[y_cols].apply(lambda row: all(row), axis=1).astype(int)
+
+    contingency_table = pd.crosstab(index=df['combined_x'], columns=df['combined_y'])
+    contingency_table = contingency_table.reindex(index=[0, 1], columns=[0, 1], fill_value=0)
+
+    try:
+        khi2, _, _, _ = chi2_contingency(contingency_table, correction=False)
+        chi2_result = khi2
+    except ValueError:
+        chi2_result = 0
+
+    total_documents = len(df)
+    print(total_documents)
+    has_x = df['descripteur'].apply(lambda annotations: x_set.issubset(set(annotations)))
+    has_y = df['descripteur'].apply(lambda annotations: y_set.issubset(set(annotations)))
+    count_x = has_x.sum()
+    count_y = has_y.sum()
+    count_xy = (has_x & has_y).sum()
+    print("tout ici",x_names,y_names,count_x, count_y, count_xy)
+    mi_result = 0    
+    if count_x > 0 and count_y > 0 and count_xy > 0:
+        mi_result = np.log2(count_xy*total_documents / (count_x * count_y))
+
+    return chi2_result, mi_result
+
+#-------------------------Calculer tous les mi et khi2 pour les options selectionnees-------------------
+def calculate_descriptors(list1, list2, script, langues):
+    df = retrieve_descriptors(script, langues)
+    results = [None] * len(list2)  
+    results_khi2 = [None] * len(list2)
+
+    list1_str = [item if isinstance(item, list) else [str(item)] for item in list1]
+    list2_str = [item if isinstance(item, list) else [str(item)] for item in list2]
+
+    flattened_list1 = [item for sublist in list1_str for item in sublist]
+    flattened_list2 = [item for sublist in list2_str for item in sublist]
+
+    def process_item(index, item2):
+        result_khi2, result = calculate_mi_khi2_desc(df, flattened_list1, [item2])
+        return index, result_khi2, result
+
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+        futures = [executor.submit(process_item, i, item2) for i, item2 in enumerate(flattened_list2)]
+        for future in concurrent.futures.as_completed(futures):
+            index, result_khi2, result = future.result()
+            results[index] = result
+            results_khi2[index] = result_khi2
+
+    result_khi2, result = calculate_mi_khi2_desc(df, flattened_list1, flattened_list2)
+    results.append(result)
+    results_khi2.append(result_khi2)
+
+    return results_khi2, results
+
+#------------------------------------Retourner les resultats des metriques (desc) au frontend------------------
+def etqchoisie_view(request):
+    if request.method == 'POST':
+        try:
+            payload = json.loads(request.body)
+            selected_options_x = payload.get('selectedX', [])  
+            selected_options_y = payload.get('selectedY', []) 
+            selected_options_languages = payload.get('languages', [])
+            selected_script = payload.get('script')
+            khi2_theorique=chi2.ppf(1-0.05,1)
+            print("chi2",khi2_theorique)
+            descriptors_khi2, descriptors = calculate_descriptors(selected_options_x, selected_options_y,selected_script,selected_options_languages)
+            response_data = {
+                'message': 'Data received successfully',
+                'selectedOptionsX': selected_options_x,
+                'selectedOptionsY': selected_options_y,
+                'descriptors': descriptors,  
+                'descriptors_khi2': descriptors_khi2,
+                'khi2_theoriques' : khi2_theorique,
+            }
+            return JsonResponse(response_data)
+        except json.JSONDecodeError:
+            return JsonResponse({'error': 'Invalid JSON'}, status=400)
+    else:
+        return JsonResponse({'error': 'Invalid HTTP method'}, status=405)
+    
+#------------------------------------------------2eme statistique---------------------------------------
+def get_mots():
+    video_collection = db["commentaires_nettoyes"]
+    global CORPUS
+    corpus_id = get_corpus_id_by_title(CORPUS)
+    conflit_id = str(get_conflit_id()) 
+
+    if not corpus_id:
+        return []
+
+    mots = set()
+    for video in video_collection.find({}, {"_id": 0, "videos.commentaires.texte": 1, "videos.commentaires.descripteur": 1, "videos.corpus": 1}):
+        videos = video.get('videos', [])
+        for video_item in videos:
+            if video_item.get('corpus') == corpus_id:
+                commentaires = video_item.get('commentaires', [])
+                for commentaire in commentaires:
+                    descripteur = commentaire.get('descripteur', [])
+                    if conflit_id in descripteur:
+                        texte = commentaire.get('texte', '')
+                        texte = texte.replace(',', '') 
+                        mots.update(texte.split()) 
+                        
+    print("nombre de mots",len(mots))
+
+    return list(mots)
+#------------------------------Recuperer les mots-------------------------------------------
+def retrieve_mots(script_param,langues_param):
+    video_collection = db["video_collection"]
+    corpus_id = get_corpus_id_by_title(CORPUS)
+    conflit_id = str(get_conflit_id())
+    data = []
+    for video in video_collection.find({}, {"_id": 0, "videos.commentaires.texte": 1, "videos.commentaires.script": 1, "videos.commentaires.langue": 1, "videos.commentaires.descripteur": 1, "videos.corpus": corpus_id}):
+        for video_item in video.get('videos', []):
+            for commentaire in video_item.get('commentaires', []):
+                texte = commentaire.get('texte', '')
+                descripteur = commentaire.get('descripteur', [])
+                if conflit_id in descripteur and commentaire.get('script') == script_param: 
+                    commentaire_langues = commentaire.get('langue', [])
+                    if set(commentaire_langues).issubset(set(langues_param)):
+                        data.append({'texte': texte})
+    return pd.DataFrame(data)
+
+#------------------------------------Fonction pour calculer mi et khi2 pour 2 mots---------------------------
+def calculate_mi_khi2_mots(df, x_mots, y_mots):
+    if isinstance(x_mots, str):
+        x_words = [word.strip() for word in x_mots.split(',')]
+    else:
+        x_words = [word.strip() for word in x_mots]
+
+    if isinstance(y_mots, str):
+        y_words = [word.strip() for word in y_mots.split(',')]
+    else:
+        y_words = [word.strip() for word in y_mots]
+
+    all_words = set(x_words).union(set(y_words))
+    for word in all_words:
+        df[f'word_{word}'] = df['texte'].apply(lambda x: int(word in x))
+
+    x_cols = [f'word_{word}' for word in x_words]
+    y_cols = [f'word_{word}' for word in y_words]
+
+    df['combined_x'] = df[x_cols].apply(lambda row: all(row), axis=1).astype(int)
+    df['combined_y'] = df[y_cols].apply(lambda row: all(row), axis=1).astype(int)
+
+    contingency_table = pd.crosstab(index=df['combined_x'], columns=df['combined_y'])
+    contingency_table = contingency_table.reindex(index=[0, 1], columns=[0, 1], fill_value=0)
+
+    try:
+        khi2, _, _, _ = chi2_contingency(contingency_table, correction=False)
+        chi2_result = khi2
+    except ValueError:
+        chi2_result = 0
+
+    x_set = set(x_words)
+    y_set = set(y_words)
+
+    total_documents = len(df)
+    print("total",total_documents)
+    has_x = df['texte'].apply(lambda annotations: x_set.issubset(set(annotations.split())))
+    has_y = df['texte'].apply(lambda annotations: y_set.issubset(set(annotations.split())))
+    count_x = has_x.sum()
+    count_y = has_y.sum()
+    count_xy = (has_x & has_y).sum()
+    print(count_x,count_y,count_xy)
+
+    mi_result = 0 
+    if count_x > 0 and count_y > 0 and count_xy > 0:
+        mi_result += np.log2(count_xy * total_documents / (count_x * count_y))
+
+    return chi2_result, mi_result
+
+#------------------------------------Calculer mi et khi2 pour les options selectionnees-----------------------
+def calculate_mots(list1, list2, script, langues):
+    df = retrieve_mots(script, langues)
+    results = [None] * len(list2) 
+    results_khi2 = [None] * len(list2)
+
+    list1_str = [item if isinstance(item, list) else [str(item)] for item in list1]
+    list2_str = [item if isinstance(item, list) else [str(item)] for item in list2]
+
+    flattened_list1 = [item for sublist in list1_str for item in sublist]
+    flattened_list2 = [item for sublist in list2_str for item in sublist]
+
+    def process_item(index, item2):
+        result_khi2, result = calculate_mi_khi2_mots(df, flattened_list1, [item2])
+        return index, result_khi2, result
+
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+        futures = [executor.submit(process_item, idx, item2) for idx, item2 in enumerate(flattened_list2)]
+        for future in concurrent.futures.as_completed(futures):
+            idx, result_khi2, result = future.result()
+            results[idx] = result
+            results_khi2[idx] = result_khi2
+
+    result_khi2, result = calculate_mi_khi2_mots(df, flattened_list1, flattened_list2)
+    results.append(result)
+    results_khi2.append(result_khi2)
+
+    return results_khi2, results
+
+#---------------------------------Requete pour envoyer les resultats(mots)----------------------------------
+def motchoisie_view(request):
+    if request.method == 'POST':
+        try:
+            payload = json.loads(request.body)
+            selected_options_x = payload.get('selectedX', []) 
+            selected_options_y = payload.get('selectedY', []) 
+            selected_options_languages = payload.get('languages', [])
+            selected_script = payload.get('script')
+            khi2_theorique = chi2.ppf(1-0.05,1)
+            print("le chi2",khi2_theorique)
+            mots_khi2,mots = calculate_mots(selected_options_x, selected_options_y,selected_script,selected_options_languages)
+            response_data = {
+                'message': 'Data received successfully',
+                'selectedOptionsX': selected_options_x,
+                'selectedOptionsY': selected_options_y,
+                'mots': mots, 
+                'mots_khi2': mots_khi2,
+                'khi2_theoriques' : khi2_theorique
+                
+            }
+            return JsonResponse(response_data)
+        except json.JSONDecodeError:
+            return JsonResponse({'error': 'Invalid JSON'}, status=400)
+    else:
+        return JsonResponse({'error': 'Invalid HTTP method'}, status=405)
+    
+#--------------------------------------Statistique excel----------------------------------------------
+#------------------------------------Recuperer tous les mots (peu importe script, langue)--------------------
+def retrieve_mots_excel():
+    video_collection = db["video_collection"]
+    corpus_id = get_corpus_id_by_title(CORPUS)
+    conflit_id = str(get_conflit_id())  
+    data = []
+    for video in video_collection.find({}, {"_id": 0, "videos.commentaires.texte": 1, "videos.commentaires.descripteur": 1, "videos.corpus": 1}):
+        for video_item in video.get('videos', []):
+            if video_item.get('corpus') == corpus_id:
+                for commentaire in video_item.get('commentaires', []):
+                    descripteur = commentaire.get('descripteur', [])
+                    if conflit_id in descripteur:
+                        texte = commentaire.get('texte', '')
+                        data.append({'texte': texte})
+
+    return pd.DataFrame(data)
+
+#----------------------------Calculer mi et khi2 pour deux mots (excel)--------------------------------
+
+def calculate_excel(df, x_mots, y_mots):
+    def process_text(text):
+        return set(text.split())
+    
+    if isinstance(x_mots, str):
+        x_words = [word.strip() for word in x_mots.split(',')]
+    else:
+        x_words = [word.strip() for word in x_mots]
+
+    if isinstance(y_mots, str):
+        y_words = [word.strip() for word in y_mots.split(',')]
+    else:
+        y_words = [word.strip() for word in y_mots]
+
+    all_words = set(x_words).union(set(y_words))
+    
+    columns_dict = {}
+    for word in all_words:
+        columns_dict[f'word_{word}'] = df['texte'].apply(lambda x: int(word in process_text(x)))
+
+    new_df = pd.concat([df, pd.DataFrame(columns_dict)], axis=1)
+    
+    x_cols = [f'word_{word}' for word in x_words]
+    y_cols = [f'word_{word}' for word in y_words]
+
+    new_df['combined_x'] = new_df[x_cols].apply(lambda row: all(row), axis=1).astype(int)
+    new_df['combined_y'] = new_df[y_cols].apply(lambda row: all(row), axis=1).astype(int)
+
+    contingency_table = pd.crosstab(index=new_df['combined_x'], columns=new_df['combined_y'])
+    contingency_table = contingency_table.reindex(index=[0, 1], columns=[0, 1], fill_value=0)
+
+    try:
+        chi2, _, _, _= chi2_contingency(contingency_table, correction=False)
+        chi2_result = chi2
+    except ValueError:
+        chi2_result = 0
+
+    x_set = set(x_words)
+    y_set = set(y_words)
+
+    total_documents = len(new_df)
+    has_x = new_df['texte'].apply(lambda annotations: x_set.issubset(process_text(annotations)))
+    has_y = new_df['texte'].apply(lambda annotations: y_set.issubset(process_text(annotations)))
+    
+    count_x = has_x.sum()
+    count_y = has_y.sum()
+    count_xy = (has_x & has_y).sum()
+
+    mi_result = 0
+    if count_x > 0 and count_y > 0 and count_xy > 0:
+        mi_result += np.log2(count_xy * total_documents / (count_x * count_y))
+
+    return chi2_result, mi_result
+
+#--------------------------------------------Preparer le fichier excel----------------------------
+
+def get_top_words(df, column='texte', limit=100):
+    word_counter = Counter()
+
+    def extract_words(text):
+        return text.split()
+
+    for text in df[column].dropna(): 
+        words = extract_words(text)
+        word_counter.update(words)
+    
+    top_words_with_counts = word_counter.most_common(limit)
+    top_words = [word for word, _ in top_words_with_counts]
+    
+    return top_words
+
+
+def calculate_all_excel():
+    script = "Latin Script"
+    langues = ["AZL", "FR", "TZL", "EN", "EMT"]
+    df = retrieve_mots(script, langues)
+    mots = get_top_words(df)
+    results_mi = []
+    results_khi2 = []
+
+    def process_pair(df, mot1, mot2):
+        try:
+            khi2, mi = calculate_excel(df, mot1, mot2)
+            return mot2, khi2, mi
+        except Exception as e:
+            print(f'Error in calculate_excel for pair ({mot1}, {mot2}): {e}')
+            return mot2, None, None
+
+    for i, mot1 in enumerate(mots):
+        mi_values = []
+        khi2_values = []
+
+        with ThreadPoolExecutor(max_workers=32) as executor:
+            future_to_mot2 = {
+                executor.submit(process_pair, df, mot1, mot2): mot2
+                for j, mot2 in enumerate(mots) if i != j
+            }
+
+            for future in as_completed(future_to_mot2):
+                mot2 = future_to_mot2[future]
+                try:
+                    mot2, khi2, mi = future.result()
+                    if mi is not None and khi2 is not None:
+                        mi_values.append((mot2, mi))
+                        khi2_values.append((mot2, khi2))
+                    else:
+                        print(f'Failed to process pair ({mot1}, {mot2})')
+                except Exception as e:
+                    print(f'Error processing pair ({mot1}, {mot2}): {e}')
+
+        mi_values.sort(key=lambda x: x[1], reverse=True)
+        khi2_values.sort(key=lambda x: x[1], reverse=True)
+
+        results_mi.append([mot1] + [(x[0], x[1]) for x in mi_values])
+        results_khi2.append([mot1] + [(x[0], x[1]) for x in khi2_values])
+
+    return results_mi, results_khi2
+
+#-------------------------------------------Retourner le fichier excel au front-----------------------
+def download_excel(request):
+    
+    results_mi, results_khi2 = calculate_all_excel()
+    df1 = pd.DataFrame(results_mi)
+    df2 = pd.DataFrame(results_khi2)
+    output = BytesIO()
+    
+    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+        df1.to_excel(writer, sheet_name='Information mutuelle', index=False, header=False)  
+        df2.to_excel(writer, sheet_name='Khi2', index=False, header=False)  
+
+
+    output.seek(0)
+    response = HttpResponse(output, content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+    response['Content-Disposition'] = 'attachment; filename="associations_binaire.xlsx"'
+    
+    return response
+
+#-------------------------------4eme statistique------------------------------------------------
 
 def calculate_freq_perc(user_labels_list):
     video_collection = db["video_collection"]
@@ -76,120 +502,6 @@ def calculate_freq_perc(user_labels_list):
     return frequency, percentage, total_descriptors
 
 
-def calculate_excel(x_mots, y_mots):
-    video_collection = db["video_collection"]
-
-    def clean_text(text):
-        text = text.lower()
-        text = re.sub(r'[^\w\s]', '', text)  
-        return set(text.split())
-
-    corpus_id = get_corpus_id_by_title(CORPUS)
-    conflit_id = str(get_conflit_id())  
-    
-    data = []
-    for video in video_collection.find({}, {"_id": 0, "videos.commentaires.texte": 1, "videos.commentaires.descripteur": 1, "videos.corpus": 1}):
-        for video_item in video.get('videos', []):
-            if video_item.get('corpus') == corpus_id:
-                for commentaire in video_item.get('commentaires', []):
-                    descripteur = commentaire.get('descripteur', [])
-                    if conflit_id in descripteur:
-                        texte = commentaire.get('texte', '')
-                        data.append({'texte': texte})
-
-    df = pd.DataFrame(data)
-
-    if isinstance(x_mots, str):
-        x_words = [word.strip().lower() for word in x_mots.split(',')]
-    else:
-        x_words = [word.strip().lower() for word in x_mots]
-
-    if isinstance(y_mots, str):
-        y_words = [word.strip().lower() for word in y_mots.split(',')]
-    else:
-        y_words = [word.strip().lower() for word in y_mots]
-
-    all_words = set(x_words).union(set(y_words))
-    for word in all_words:
-        df[f'word_{word}'] = df['texte'].apply(lambda x: int(word in clean_text(x)))
-
-    x_cols = [f'word_{word}' for word in x_words]
-    y_cols = [f'word_{word}' for word in y_words]
-
-    df['combined_x'] = df[x_cols].apply(lambda row: all(row), axis=1).astype(int)
-    df['combined_y'] = df[y_cols].apply(lambda row: all(row), axis=1).astype(int)
-
-    contingency_table = pd.crosstab(index=df['combined_x'], columns=df['combined_y'])
-    contingency_table = contingency_table.reindex(index=[0, 1], columns=[0, 1], fill_value=0)
-
-    try:
-        chi2, p, dof, expected = chi2_contingency(contingency_table, correction=False)
-        chi2_result = chi2
-    except ValueError:
-        chi2_result = 0
-
-    x_set = set(x_words)
-    y_set = set(y_words)
-
-    total_documents = len(df)
-    print(total_documents)
-    df['cleaned_texte'] = df['texte'].apply(clean_text)
-
-    has_x = df['cleaned_texte'].apply(lambda annotations: x_set.issubset(annotations))
-    has_y = df['cleaned_texte'].apply(lambda annotations: y_set.issubset(annotations))
-    count_x = has_x.sum()
-    count_y = has_y.sum()
-    count_xy = (has_x & has_y).sum()
-
-    prob_x = count_x / total_documents if total_documents > 0 else 0
-    prob_y = count_y / total_documents if total_documents > 0 else 0
-    prob_xy = count_xy / total_documents if total_documents > 0 else 0
-    mi_result = 0
-    if prob_x > 0 and prob_y > 0 and prob_xy > 0:
-        mi_result = np.log2(prob_xy / (prob_x * prob_y))
-
-    return chi2_result, mi_result
-
-
-def calculate_all_excel():
-    mots = get_mots()
-    results_mi = []
-    results_khi2 = []
-
-    for i, mot1 in enumerate(mots):
-        mi_values = []
-        khi2_values = []
-        for j, mot2 in enumerate(mots):
-            if i != j:
-                khi2, mi = calculate_excel([mot1], [mot2])
-                mi_values.append((mot2, mi))
-                khi2_values.append((mot2, khi2))
-        
-        mi_values.sort(key=lambda x: x[1], reverse=True)
-        khi2_values.sort(key=lambda x: x[1], reverse=True)
-        results_mi.append([mot1] + [x[0] for x in mi_values])
-        results_khi2.append([mot1] + [x[0] for x in khi2_values])
-    
-    return results_mi,results_khi2
-
-
-def download_excel(request):
-    
-    results_mi, results_khi2 = calculate_all_excel()
-    df1 = pd.DataFrame(results_mi)
-    df2 = pd.DataFrame(results_khi2)
-    output = BytesIO()
-    
-    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-        df1.to_excel(writer, sheet_name='Information mutuelle', index=False, header=False)  
-        df2.to_excel(writer, sheet_name='Khi2', index=False, header=False)  
-
-
-    output.seek(0)
-    response = HttpResponse(output, content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
-    response['Content-Disposition'] = 'attachment; filename="associations_binaire.xlsx"'
-    
-    return response
 
 video_collection = db["video_collection"]
 def script_choisi(request):
@@ -255,7 +567,6 @@ def freq_script():
 
 
 def get_titles_from_corpus():
-    
     collection = db['corpus']  
     titles = collection.find({}, {"title": 1, "_id": 0})  
     title_list = [doc['title'] for doc in titles if 'title' in doc]
@@ -318,180 +629,6 @@ def freq_lang(script_value):
 
 
 
-def calculate_mi_khi2_mots(x_mots, y_mots, script_param, langues_param):
-    video_collection = db["video_collection"]
-
-    def clean_text(text):
-        text = text.lower()
-        text = re.sub(r'[^\w\s]', '', text)  
-        return set(text.split())
-
-    corpus_id = get_corpus_id_by_title(CORPUS)
-    conflit_id = str(get_conflit_id())
-    data = []
-
-    for video in video_collection.find({}, {"_id": 0, "videos.commentaires.texte": 1, "videos.commentaires.script": 1, "videos.commentaires.langue": 1, "videos.commentaires.descripteur": 1, "videos.corpus": 1}):
-        for video_item in video.get('videos', []):
-            if video_item.get('corpus') == corpus_id:
-                for commentaire in video_item.get('commentaires', []):
-                    texte = commentaire.get('texte', '')
-                    descripteur = commentaire.get('descripteur', [])
-                    if conflit_id in descripteur and commentaire.get('script') == script_param:
-                        commentaire_langues = commentaire.get('langue', [])
-                        if set(commentaire_langues).issubset(set(langues_param)):
-                            data.append({'texte': texte})
-
-    df = pd.DataFrame(data)
-    if isinstance(x_mots, str):
-        x_words = [word.strip().lower() for word in x_mots.split(',')]
-    else:
-        x_words = [word.strip().lower() for word in x_mots]
-
-    if isinstance(y_mots, str):
-        y_words = [word.strip().lower() for word in y_mots.split(',')]
-    else:
-        y_words = [word.strip().lower() for word in y_mots]
-
-    all_words = set(x_words).union(set(y_words))
-    for word in all_words:
-        df[f'word_{word}'] = df['texte'].apply(lambda x: int(word in clean_text(x)))
-
-    x_cols = [f'word_{word}' for word in x_words]
-    y_cols = [f'word_{word}' for word in y_words]
-
-    df['combined_x'] = df[x_cols].apply(lambda row: all(row), axis=1).astype(int)
-    df['combined_y'] = df[y_cols].apply(lambda row: all(row), axis=1).astype(int)
-
-    contingency_table = pd.crosstab(index=df['combined_x'], columns=df['combined_y'])
-    contingency_table = contingency_table.reindex(index=[0, 1], columns=[0, 1], fill_value=0)
-
-    try:
-        khi2, p, dof, expected = chi2_contingency(contingency_table, correction=False)
-        alpha = 0.05
-        khi2_theorique = chi2.ppf(1-alpha,dof)
-        chi2_result = khi2
-    except ValueError:
-        chi2_result = 0
-        khi2_theorique=0
-
-    x_set = set(x_words)
-    y_set = set(y_words)
-
-    total_documents = len(df)
-    df['cleaned_texte'] = df['texte'].apply(clean_text)
-
-    has_x = df['cleaned_texte'].apply(lambda annotations: x_set.issubset(annotations))
-    has_y = df['cleaned_texte'].apply(lambda annotations: y_set.issubset(annotations))
-    count_x = has_x.sum()
-    count_y = has_y.sum()
-    count_xy = (has_x & has_y).sum()
-
-    prob_x = count_x / total_documents if total_documents > 0 else 0
-    prob_y = count_y / total_documents if total_documents > 0 else 0
-    prob_xy = count_xy / total_documents if total_documents > 0 else 0
-    mi_result = 0
-    if prob_x > 0 and prob_y > 0 and prob_xy > 0:
-        mi_result += np.log2(prob_xy / (prob_x * prob_y))
-
-    return chi2_result,khi2_theorique, mi_result
-
-
-
-def calculate_mi_khi2_desc(x_names, y_names, script_param, langues_param):
-    video_collection = db["commentaires_nettoyes"]
-    etiquette_collection = db["etiquette"]
-
-    def get_etiquette_id(name):
-        result = etiquette_collection.find_one({"name": name.strip()}, {"_id": 1})
-        return str(result["_id"]) if result else None
-
-    def retrieve_descriptors():
-        count_Comment = 0
-        corpus_id = get_corpus_id_by_title(CORPUS)
-        data = []
-        for video in video_collection.find({}, {"_id": 0, "videos.commentaires.descripteur": 1, "videos.commentaires.script": 1, "videos.commentaires.langue": 1, "videos.corpus": 1}):
-            for video_item in video.get('videos', []):
-                if video_item.get('corpus') == corpus_id:
-                    for commentaire in video_item.get('commentaires', []):
-                        if commentaire.get('script') == script_param:
-                            commentaire_langues = commentaire.get('langue', [])
-                            if set(commentaire_langues).issubset(set(langues_param)):
-                                count_Comment += 1
-                                descripteurs = commentaire.get('descripteur', [])
-                                data.append({'descripteur': descripteurs})
-        return pd.DataFrame(data)
-
-    df = retrieve_descriptors()
-    x_set = {get_etiquette_id(name) for name in x_names if get_etiquette_id(name)}
-    y_set = {get_etiquette_id(name) for name in y_names if get_etiquette_id(name)}
-
-    all_annotations = x_set.union(y_set)
-    for annotation in all_annotations:
-        df[f'annotation_{annotation}'] = df['descripteur'].apply(lambda x: int(annotation in x))
-
-    x_cols = [f'annotation_{x_id}' for x_id in x_set]
-    y_cols = [f'annotation_{y_id}' for y_id in y_set]
-
-    df['combined_x'] = df[x_cols].apply(lambda row: all(row), axis=1).astype(int)
-    df['combined_y'] = df[y_cols].apply(lambda row: all(row), axis=1).astype(int)
-
-    contingency_table = pd.crosstab(index=df['combined_x'], columns=df['combined_y'])
-    contingency_table = contingency_table.reindex(index=[0, 1], columns=[0, 1], fill_value=0)
-
-    try:
-        khi2, p, dof, expected = chi2_contingency(contingency_table, correction=False)
-        alpha = 0.05
-        chi2_theorique = chi2.ppf(1-alpha,dof)
-        chi2_result = khi2
-    except ValueError:
-        chi2_result = 0
-        chi2_theorique = 0
-
-    total_documents = len(df)
-    print("total,",total_documents)
-    has_x = df['descripteur'].apply(lambda annotations: x_set.issubset(set(annotations)))
-    has_y = df['descripteur'].apply(lambda annotations: y_set.issubset(set(annotations)))
-    count_x = has_x.sum()
-    count_y = has_y.sum()
-    count_xy = (has_x & has_y).sum()
-    print("tout ici",x_names,y_names,count_x, count_y, count_xy)
-
-    prob_x = count_x / total_documents if total_documents > 0 else 0
-    prob_y = count_y / total_documents if total_documents > 0 else 0
-    prob_xy = count_xy / total_documents if total_documents > 0 else 0
-    mi_result = 0
-    if prob_x > 0 and prob_y > 0 and prob_xy > 0:
-        mi_result = np.log2(prob_xy / (prob_x * prob_y))
-
-    return chi2_result, chi2_theorique, mi_result
-
-
-def get_mots():
-    video_collection = db["commentaires_nettoyes"]
-    global CORPUS
-    corpus_id = get_corpus_id_by_title(CORPUS)
-    conflit_id = str(get_conflit_id()) 
-
-    if not corpus_id:
-        return []
-
-    mots = set()
-    for video in video_collection.find({}, {"_id": 0, "videos.commentaires.texte": 1, "videos.commentaires.descripteur": 1, "videos.corpus": 1}):
-        videos = video.get('videos', [])
-        for video_item in videos:
-            if video_item.get('corpus') == corpus_id:
-                commentaires = video_item.get('commentaires', [])
-                for commentaire in commentaires:
-                    descripteur = commentaire.get('descripteur', [])
-                    if conflit_id in descripteur:
-                        texte = commentaire.get('texte', '')
-                        texte = texte.replace(',', '') 
-                        mots.update(texte.split()) 
-
-    return list(mots)
-
-
-
 def get_etiquettes():
     video_collection = db["video_collection"]
     etiquette_collection = db["etiquette"]
@@ -502,12 +639,11 @@ def get_etiquettes():
         return [] 
 
     descripteurs = video_collection.find({}, {'videos.commentaires.descripteur': 1, 'videos.corpus': 1})
-    
     ids = set()
     for video in descripteurs:
         videos = video.get('videos', [])
         for video_item in videos:
-            if video_item.get('corpus') == corpus_id:
+            if video_item.get('corpus')==corpus_id:
                 commentaires = video_item.get('commentaires', [])
                 for commentaire in commentaires:
                     descripteur = commentaire.get('descripteur', [])
@@ -556,111 +692,6 @@ def get_mots_view(request):
         return JsonResponse(mots, safe=False)
     return JsonResponse({'error': 'Invalid request method'}, status=405)
     
-def etqchoisie_view(request):
-    if request.method == 'POST':
-        try:
-            payload = json.loads(request.body)
-            selected_options_x = payload.get('selectedX', [])  
-            selected_options_y = payload.get('selectedY', []) 
-            selected_options_languages = payload.get('languages', [])
-            selected_script = payload.get('script')
-            descriptors_khi2,khi2_theoriques,descriptors = calculate_descriptors(selected_options_x, selected_options_y,selected_script,selected_options_languages)
-            print("khi2 t",khi2_theoriques)
-            response_data = {
-                'message': 'Data received successfully',
-                'selectedOptionsX': selected_options_x,
-                'selectedOptionsY': selected_options_y,
-                'descriptors': descriptors,  
-                'descriptors_khi2': descriptors_khi2,
-                'khi2_theoriques':khi2_theoriques
-            }
-            return JsonResponse(response_data)
-        except json.JSONDecodeError:
-            return JsonResponse({'error': 'Invalid JSON'}, status=400)
-    else:
-        return JsonResponse({'error': 'Invalid HTTP method'}, status=405)
-    
-
-
-def calculate_descriptors(list1, list2, script, langues):
-    results = []
-    results_khi2 = []
-    results_khi2_theoriques = []
-    
-
-    list1_str = [item if isinstance(item, list) else [str(item)] for item in list1]
-    list2_str = [item if isinstance(item, list) else [str(item)] for item in list2]
-
-    flattened_list1 = [item for sublist in list1_str for item in sublist]
-    flattened_list2 = [item for sublist in list2_str for item in sublist]
-
-    for item2 in flattened_list2:
-        result_khi2, result_khi2_theoriques, result = calculate_mi_khi2_desc(flattened_list1, [item2],script, langues)
-        results.append(result)
-        results_khi2.append(result_khi2)
-        results_khi2_theoriques.append(result_khi2_theoriques)
-
-    result_khi2, result_khi2_theoriques,result = calculate_mi_khi2_desc(flattened_list1, flattened_list2, script, langues)
-    results.append(result)
-    results_khi2.append(result_khi2)
-    results_khi2_theoriques.append(result_khi2_theoriques)
-
-    return results_khi2,results_khi2_theoriques, results
-
-def motchoisie_view(request):
-    if request.method == 'POST':
-        try:
-            payload = json.loads(request.body)
-            selected_options_x = payload.get('selectedX', []) 
-            selected_options_y = payload.get('selectedY', []) 
-            selected_options_languages = payload.get('languages', [])
-            selected_script = payload.get('script')
-            mots_khi2, khi2_theoriques,mots = calculate_mots(selected_options_x, selected_options_y,selected_script,selected_options_languages)
-            print("khi2 mots",khi2_theoriques)
-            response_data = {
-                'message': 'Data received successfully',
-                'selectedOptionsX': selected_options_x,
-                'selectedOptionsY': selected_options_y,
-                'mots': mots, 
-                'mots_khi2': mots_khi2,
-                'khi2_theoriques' : khi2_theoriques
-                
-            }
-            return JsonResponse(response_data)
-        except json.JSONDecodeError:
-            return JsonResponse({'error': 'Invalid JSON'}, status=400)
-    else:
-        return JsonResponse({'error': 'Invalid HTTP method'}, status=405)
-    
-
-
-
-    
-def calculate_mots(list1, list2, script, langues):
-    results = []
-    results_khi2 = []
-    khi2_theoriques =[]
-    list1_str = [item if isinstance(item, list) else [str(item)] for item in list1]
-    list2_str = [item if isinstance(item, list) else [str(item)] for item in list2]
-
-    flattened_list1 = [item for sublist in list1_str for item in sublist]
-    flattened_list2 = [item for sublist in list2_str for item in sublist]
-
-    for item2 in flattened_list2:
-        result_khi2, khi2_theorique, result = calculate_mi_khi2_mots(flattened_list1, [item2], script, langues)
-        results.append(result)
-        results_khi2.append(result_khi2)
-        khi2_theoriques.append(khi2_theorique)
-        
-        
-    result_khi2, khi2_theorique, result = calculate_mi_khi2_mots(flattened_list1, flattened_list2, script, langues)
-    results.append(result)
-    results_khi2.append(result_khi2)
-    khi2_theoriques.append(khi2_theorique)
-
-    return results_khi2,khi2_theoriques, results
-
-
 
 def process_combinations(request):
     if request.method == 'POST':
@@ -683,7 +714,6 @@ def process_combinations(request):
             return JsonResponse({"error": str(e)}, status=400)
 
     return JsonResponse({"error": "Method not allowed"}, status=405)
-
 
 JSON_FILE_PATH = 'validation/videos.json'
 
@@ -1529,7 +1559,7 @@ class DeepCleaningText(APIView):
             return Response({'message': 'No operations selected'}, status=status.HTTP_200_OK)
         processed_comments = []
         raw_and_cleaned = []
-        video_documents = list(db.commentaires_nettoyes.find({}, {
+        video_documents = list(db.video_collection.find({}, {
                   '_id': 1,  
                   'videos.id_video': 1,  
                   'videos.commentaires.id_commentaire': 1,  
@@ -1596,7 +1626,7 @@ class DeepCleaningText(APIView):
                                         }
                                     }
                                     array_filters = [{'comment.id_commentaire': comment['id_commentaire']}]
-                                    db.commentaires_nettoyes.update_one(filter, update, array_filters=array_filters)
+                                    db.video_collection.update_one(filter, update, array_filters=array_filters)
 
                                     local_processed_count += 1
                                     progress = int((local_processed_count / total_comments) * 100) 

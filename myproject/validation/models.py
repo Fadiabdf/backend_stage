@@ -6,7 +6,8 @@ class Commentaire(EmbeddedDocument):
     auteur = fields.StringField()
     langue = fields.ListField(fields.StringField())  # Array of strings
     descripteur = fields.ListField(fields.StringField())  # Array of strings
-    cleaned = fields.ListField(fields.DictField())  # Array of dictionaries with str and bool
+    #cleaned = fields.ListField(fields.DictField())  # Array of dictionaries with str and bool
+    cleaned = fields.ListField(fields.ListField(fields.DynamicField()))
     filtred= fields.BooleanField(default=False)
     script= fields.StringField(default="script")
 
