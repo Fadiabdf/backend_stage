@@ -8,7 +8,7 @@ WORKDIR /myproject
 COPY . /myproject
 
 # Install the dependencies
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install  -r  requirements.txt
 
 # Download spaCy model
 RUN python -m spacy download fr_core_news_sm
